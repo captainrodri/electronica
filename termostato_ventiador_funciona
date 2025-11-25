@@ -1,0 +1,81 @@
+/**
+ * @file main.c
+ * @brief Termostato simple para ventilador.
+ * Sensor: NTC + Divisor + OpAmp en AN1.
+ * Actuador: Ventilador en RB10.
+ * Lógica: ON si T > 30ºC (ADC > 559).
+ */
+
+#include <p33FJ32MC202.h>
+#include "config.h" // Asumo que tienes este archivo en tu proyecto
+
+int main(void) {
+    // 1. Inicialización del reloj
+    inicializarReloj();
+
+    // --- CONFIGURACIÓN DE PINES ---
+    
+    // Configurar todo como digital primero para evitar conflictos
+    AD1PCFGL = 0xFFFF;
+
+    // Configurar RB10 como SALIDA (Ventilador)
+    TRISBbits.TRISB10 = 0; 
+    PORTBbits.RB10 = 0;     // Empezar con el ventilador apagado
+
+    // Configurar AN1 (Pin 3) como ENTRADA ANALÓGICA (Sensor Temperatura)
+    // Importante: Poner el bit correspondiente a 0 en AD1PCFGL
+    AD1PCFGLbits.PCFG1 = 0; 
+    TRISAbits.TRISA1 = 1;   // Asegurar que el pin es entrada
+
+    // --- CONFIGURACIÓN DEL ADC ---
+    
+    // AD1CON1:
+    // SSRC<2:0> = 111 (Auto-convertir tras terminar el muestreo)
+    // ASAM = 0 (Muestreo manual, lo iniciamos nosotros por software)
+    // FORM<1:0> = 00 (Salida en entero sin signo 0-1023)
+    AD1CON1 = 0x00E0; 
+
+    // AD1CON3:
+    // SAMC<4:0> = 15 (Tiempo de auto-muestreo largo, para asegurar buena lectura)
+    // ADCS<7:0> = 2  (Reloj de conversión derivado de Tcy)
+    AD1CON3 = 0x0F02; 
+
+    // AD1CHS0: Seleccionar canal AN1 como entrada positiva
+    AD1CHS0bits.CH0SA = 1; 
+
+    // Encender el módulo ADC
+    AD1CON1bits.ADON = 1;
+
+
+    // --- BUCLE PRINCIPAL ---
+    unsigned int lectura_adc = 0;
+    
+    // Umbral calculado según tu tabla:
+    // 30ºC -> Vout = 1.803V -> ADC = (1.803/3.3)*1024 approx 559
+    const unsigned int UMBRAL_30_GRADOS = 559; 
+
+    while (1) {
+        // 1. Iniciar muestreo (Sampling)
+        AD1CON1bits.SAMP = 1; 
+        
+        // 2. Esperar a que termine la conversión
+        // El hardware hace: Muestreo (SAMC) -> Conversión -> Pone DONE a 1
+        while (!AD1CON1bits.DONE); 
+        
+        // 3. Leer el resultado del buffer
+        lectura_adc = ADC1BUF0;
+
+        // 4. Lógica de control
+        // Según tu esquema: +Temp = -Resistencia NTC = +Voltaje = +ADC
+        if (lectura_adc > UMBRAL_30_GRADOS) {
+            // Hace calor (> 30ºC) -> Encender ventilador
+            PORTBbits.RB10 = 1; 
+        } 
+        else {
+            // Hace fresco (<= 30ºC) -> Apagar ventilador
+            PORTBbits.RB10 = 0; 
+        }
+    }
+
+    return 0;
+}
